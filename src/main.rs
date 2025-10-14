@@ -96,7 +96,7 @@ fn load_lockfile(src: &str) -> Result<Lockfile, String> {
         let path = url
             .to_file_path()
             .map_err(|_| "file URL error".to_string())?;
-        return Lockfile::load(path).map_err(|e| e.to_string());
+        Lockfile::load(path).map_err(|e| e.to_string())
     } else if url.scheme() == "http" || url.scheme() == "https" {
         let response = get(url.as_str()).send().map_err(|e| e.to_string())?;
         if !response.is_success() {
@@ -106,9 +106,9 @@ fn load_lockfile(src: &str) -> Result<Lockfile, String> {
             ));
         }
         let text = response.text().map_err(|e| e.to_string())?;
-        return Lockfile::from_str(&text).map_err(|e| e.to_string());
+        Lockfile::from_str(&text).map_err(|e| e.to_string())
     } else {
-        return Err(format!("Unsupported URL scheme: {}", url.scheme()));
+        Err(format!("Unsupported URL scheme: {}", url.scheme()))
     }
 }
 
@@ -130,7 +130,7 @@ fn package_matches_hash(pkg: &cargo_lock::Package, hash: &str) -> bool {
     false
 }
 
-fn path_to_str(path: &Vec<Package>) -> String {
+fn path_to_str(path: &[Package]) -> String {
     path.iter()
         .map(|p| format!("{}@{}", p.name, p.version))
         .collect::<Vec<_>>()
@@ -149,11 +149,7 @@ impl State {
         })
     }
 
-    fn try_insert_package(
-        &mut self,
-        package: &Package,
-        path: &Vec<Package>,
-    ) -> Result<bool, String> {
+    fn try_insert_package(&mut self, package: &Package, path: &[Package]) -> Result<bool, String> {
         if let Some(existing) = self.packages.get(&package.name) {
             if self.phase == Phase::NameAndVersionIntersection
                 && existing.0.version != package.version
@@ -176,7 +172,7 @@ impl State {
                 );
             }
             self.packages
-                .insert(package.name.clone(), (package.clone(), path.clone()));
+                .insert(package.name.clone(), (package.clone(), path.to_vec()));
             Ok(true)
         }
     }
@@ -194,11 +190,11 @@ impl State {
                 .lockfile
                 .packages
                 .iter()
-                .cloned()
-                .find(|p| dep.matches(p));
+                .find(|&p| dep.matches(p))
+                .cloned();
             if let Some(dep_pkg) = dep_pkg {
                 path.push(dep_pkg.clone());
-                if self.try_insert_package(&dep_pkg, &path)? {
+                if self.try_insert_package(&dep_pkg, path)? {
                     self.add_all_dependencies_recursive(&dep_pkg, path)?;
                 }
                 path.pop();
@@ -208,7 +204,7 @@ impl State {
     }
 
     fn add_packages_in_dependency_tree(&mut self) -> Result<(), String> {
-        let all_packages = self.lockfile.packages.iter().cloned().collect::<Vec<_>>();
+        let all_packages = self.lockfile.packages.to_vec();
         for package in all_packages.iter() {
             if self.spec.exclude_pkgs.contains(package.name.as_str()) {
                 continue;
@@ -241,13 +237,13 @@ impl State {
             .lockfile
             .packages
             .iter()
+            .filter(|&x| !self.spec.exclude_pkgs.contains(x.name.as_str()))
             .cloned()
-            .filter(|x| !self.spec.exclude_pkgs.contains(x.name.as_str()))
             .collect::<Vec<_>>();
         let mut path = Vec::new();
         for package in all_packages {
             path.push(package.clone());
-            self.try_insert_package(&package, &mut path)?;
+            self.try_insert_package(&package, &path)?;
             path.pop();
         }
         Ok(())
