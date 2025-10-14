@@ -154,18 +154,11 @@ impl State {
         package: &Package,
         path: &Vec<Package>,
     ) -> Result<bool, String> {
-        if let Some(existing) = self.packages.get(&package.name) {
+        if let Some(existing) = self.packages.get_mut(&package.name) {
             if self.phase == Phase::NameAndVersionIntersection
-                && existing.0.version != package.version
+                && existing.0.version < package.version
             {
-                return Err(format!(
-                    "Package {} has multiple versions in lockfile {}: {} and {}, path: {}",
-                    package.name,
-                    self.spec.src,
-                    existing.0.version,
-                    package.version,
-                    path_to_str(path)
-                ));
+                existing.0.version = package.version.clone();
             }
             Ok(false)
         } else {
