@@ -158,7 +158,8 @@ impl State {
             if self.phase == Phase::NameAndVersionIntersection
                 && existing.0.version < package.version
             {
-                existing.0.version = package.version.clone();
+                existing.0 = package.clone();
+                existing.1 = path.clone();
             }
             Ok(false)
         } else {
