@@ -1,5 +1,6 @@
 use attohttpc::get;
 use cargo_lock::{Lockfile, Name, Package};
+use petgraph::{algo::toposort, graph::DiGraph};
 use std::{
     collections::{BTreeMap, BTreeSet},
     str::FromStr,
@@ -130,13 +131,6 @@ fn package_matches_hash(pkg: &cargo_lock::Package, hash: &str) -> bool {
     false
 }
 
-fn path_to_str(path: &[Package]) -> String {
-    path.iter()
-        .map(|p| format!("{}@{}", p.name, p.version))
-        .collect::<Vec<_>>()
-        .join(" -> ")
-}
-
 impl State {
     fn new(spec: Spec, verbose: bool) -> Result<Self, String> {
         let lockfile = load_lockfile(&spec.src)?;
@@ -152,7 +146,7 @@ impl State {
     fn try_insert_package(&mut self, package: &Package, path: &[Package]) -> Result<bool, String> {
         if let Some(existing) = self.packages.get_mut(&package.name) {
             if self.phase == Phase::NameAndVersionIntersection
-                && existing.0.version < package.version
+                && existing.0.version != package.version
             {
                 existing.0 = package.clone();
                 existing.1 = path.to_vec();
@@ -183,9 +177,7 @@ impl State {
             let dep_pkg = self
                 .lockfile
                 .packages
-                .iter()
-                .find(|&p| dep.matches(p))
-                .cloned();
+                .iter().find(|&p| dep.matches(p)).cloned();
             if let Some(dep_pkg) = dep_pkg {
                 path.push(dep_pkg.clone());
                 if self.try_insert_package(&dep_pkg, path)? {
@@ -230,9 +222,7 @@ impl State {
         let all_packages = self
             .lockfile
             .packages
-            .iter()
-            .filter(|&x| !self.spec.exclude_pkgs.contains(x.name.as_str()))
-            .cloned()
+            .iter().filter(|&x| !self.spec.exclude_pkgs.contains(x.name.as_str())).cloned()
             .collect::<Vec<_>>();
         let mut path = Vec::new();
         for package in all_packages {
@@ -311,27 +301,87 @@ impl Program {
         self.state_b.packages.clear();
         let intersection = self.add_packages_and_calculate_intesection()?;
 
-        let mut all_ok = true;
+        // Collect packages with different versions
+        let mut different: BTreeMap<Name, &Package> = BTreeMap::new();
         for name in intersection.iter() {
-            let (pkg_a, path_a) = self.state_a.packages.get(name).unwrap();
-            let (pkg_b, path_b) = self.state_b.packages.get(name).unwrap();
+            let (pkg_a, _) = self.state_a.packages.get(name).unwrap();
+            let (pkg_b, _) = self.state_b.packages.get(name).unwrap();
+            // Skip workspace crates (no source means it's a local/workspace package)
+            if pkg_b.source.is_none() {
+                continue;
+            }
             if pkg_a.version == pkg_b.version {
                 if self.state_a.verbose {
                     println!("SAME {} {}", name, pkg_a.version);
                 }
             } else {
-                println!("DIFFERENT {} {} vs. {}", name, pkg_a.version, pkg_b.version);
-                println!("  path A: {}", path_to_str(path_a));
-                println!("  path B: {}", path_to_str(path_b));
-                all_ok = false;
+                different.insert(name.clone(), pkg_a);
             }
         }
-        if all_ok {
+
+        if different.is_empty() {
             println!("All packages have the same versions");
-            Ok(())
-        } else {
-            Err("Some packages have different versions".to_string())
+            return Ok(());
         }
+
+        // Find packages only in lockfile B that depend on packages we're updating.
+        // These may block updates due to version constraints.
+        let mut blocking_deps: BTreeMap<Name, Vec<&Package>> = BTreeMap::new();
+        for pkg in &self.state_b.lockfile.packages {
+            // Skip packages that are in both lockfiles
+            if intersection.contains(&pkg.name) {
+                continue;
+            }
+            // Skip workspace crates
+            if pkg.source.is_none() {
+                continue;
+            }
+            // Check if this B-only package depends on any package we're updating
+            for dep in &pkg.dependencies {
+                let dep_name = Name::from_str(dep.name.as_str()).unwrap();
+                if different.contains_key(&dep_name) {
+                    blocking_deps.entry(dep_name).or_default().push(pkg);
+                }
+            }
+        }
+
+        // Build dependency graph and topologically sort.
+        // Edges go from dependent to dependency; toposort returns dependents first.
+        let mut graph = DiGraph::<Name, ()>::new();
+        let mut node_indices: BTreeMap<Name, _> = BTreeMap::new();
+
+        for name in different.keys() {
+            node_indices.insert(name.clone(), graph.add_node(name.clone()));
+        }
+
+        for (name, pkg) in &different {
+            for dep in &pkg.dependencies {
+                let dep_name = Name::from_str(dep.name.as_str()).unwrap();
+                if let Some(&dep_idx) = node_indices.get(&dep_name) {
+                    graph.add_edge(node_indices[name], dep_idx, ());
+                }
+            }
+        }
+
+        let sorted = toposort(&graph, None).expect("dependency cycle detected");
+
+        // Output cargo update commands in sorted order (dependents first)
+        for idx in &sorted {
+            let name = &graph[*idx];
+            let pkg_a = different.get(name).unwrap();
+            // Warn about B-only packages that may block this update
+            if let Some(blockers) = blocking_deps.get(name) {
+                for blocker in blockers {
+                    println!(
+                        "# {} {} (only in B) depends on {}; may need: cargo update -p {}",
+                        blocker.name, blocker.version, name, blocker.name
+                    );
+                }
+            }
+            println!("cargo update -p {} --precise {}", name, pkg_a.version);
+        }
+
+        Err("Some packages have different versions".to_string())
     }
 }
 
