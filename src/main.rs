@@ -143,17 +143,13 @@ impl State {
         })
     }
 
-    fn try_insert_package(
-        &mut self,
-        package: &Package,
-        path: &Vec<Package>,
-    ) -> Result<bool, String> {
+    fn try_insert_package(&mut self, package: &Package, path: &[Package]) -> Result<bool, String> {
         if let Some(existing) = self.packages.get_mut(&package.name) {
             if self.phase == Phase::NameAndVersionIntersection
                 && existing.0.version != package.version
             {
                 existing.0 = package.clone();
-                existing.1 = path.clone();
+                existing.1 = path.to_vec();
             }
             Ok(false)
         } else {
@@ -164,7 +160,7 @@ impl State {
                 );
             }
             self.packages
-                .insert(package.name.clone(), (package.clone(), path.clone()));
+                .insert(package.name.clone(), (package.clone(), path.to_vec()));
             Ok(true)
         }
     }
