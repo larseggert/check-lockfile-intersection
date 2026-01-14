@@ -177,7 +177,9 @@ impl State {
             let dep_pkg = self
                 .lockfile
                 .packages
-                .iter().find(|&p| dep.matches(p)).cloned();
+                .iter()
+                .find(|&p| dep.matches(p))
+                .cloned();
             if let Some(dep_pkg) = dep_pkg {
                 path.push(dep_pkg.clone());
                 if self.try_insert_package(&dep_pkg, path)? {
@@ -222,7 +224,9 @@ impl State {
         let all_packages = self
             .lockfile
             .packages
-            .iter().filter(|&x| !self.spec.exclude_pkgs.contains(x.name.as_str())).cloned()
+            .iter()
+            .filter(|&x| !self.spec.exclude_pkgs.contains(x.name.as_str()))
+            .cloned()
             .collect::<Vec<_>>();
         let mut path = Vec::new();
         for package in all_packages {

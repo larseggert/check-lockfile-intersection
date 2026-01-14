@@ -8,8 +8,8 @@ authors = ["Graydon Hoare <graydon@pobox.com>"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-cargo-lock = "11"
-attohttpc = "0"
-petgraph = "0"
-url = "2"
-xflags = "0"
+cargo-lock = { version = "11", default-features = false }
+attohttpc = { version = "0", default-features = false, features = ["tls-native"] }
+petgraph = { version = "0", default-features = false }
+url = { version = "2", default-features = false }
+xflags = { version = "0", default-features = false }
